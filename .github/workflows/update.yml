@@ -25,10 +25,16 @@ jobs:
         env:
           ASSEMBLY_KEY: ${{ secrets.ASSEMBLY_KEY }}
         run: node scripts/fetch.mjs
+      - name: 상임위 회의록에서 출석 명단 수집 (시범)
+        continue-on-error: true   # 이 단계가 실패해도 본회의 데이터 갱신은 그대로 반영합니다
+        env:
+          ASSEMBLY_KEY: ${{ secrets.ASSEMBLY_KEY }}
+          COMMITTEES: 교육위원회    # 쉼표로 위원회를 더 추가할 수 있습니다 (예: 교육위원회,보건복지위원회)
+        run: node scripts/fetch-committee.mjs
       - name: 변경 사항 커밋
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/attendance.json
+          git add data/
           git diff --cached --quiet || git commit -m "데이터 갱신 $(TZ=Asia/Seoul date +'%Y-%m-%d %H:%M')"
           git push
