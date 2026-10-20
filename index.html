@@ -51,6 +51,12 @@
   .note{font-size:12px;color:var(--muted);line-height:1.7}
   footer{text-align:center;font-size:12px;color:var(--muted);padding:20px}
   #loading{padding:40px;text-align:center;color:var(--muted)}
+  .tabs{background:#fff;border-bottom:1px solid var(--line)}
+  .tabs .in{max-width:1200px;margin:0 auto;padding:0 16px;display:flex;gap:4px}
+  .tabs button{border:none;border-bottom:3px solid transparent;border-radius:0;background:none;color:var(--muted);padding:12px 16px;font-weight:bold}
+  .tabs button.on{color:var(--navy);border-bottom-color:var(--navy)}
+  .ex2{color:#b7791f}
+  .chip{display:inline-block;padding:1px 7px;border-radius:9px;font-size:11.5px;background:#eef2f7;color:#445}
   @media (max-width:700px){ .hide-m{display:none} header h1{font-size:20px} .bars .name{width:100px} }
 </style>
 </head>
@@ -60,7 +66,13 @@
   <p>22대 국회 본회의 표결 참여 현황 · 국회 열린국회정보 공공데이터 · <span id="updated"></span></p>
 </div></header>
 
+<nav class="tabs"><div class="in">
+  <button id="tabP" class="on">본회의 표결</button>
+  <button id="tabC">상임위 출석 <span class="chip">시범</span></button>
+</div></nav>
+
 <main>
+ <section id="tab-plenary">
   <div id="loading">데이터를 불러오는 중…</div>
   <div id="app" style="display:none">
     <div class="card">
@@ -114,6 +126,46 @@
       </p>
     </div>
   </div>
+ </section>
+
+ <section id="tab-committee" style="display:none">
+  <div id="c-loading" style="padding:40px;text-align:center;color:var(--muted)">상임위 데이터를 불러오는 중…</div>
+  <div id="c-app" style="display:none">
+    <div class="card">
+      <div class="row">
+        <label>위원회 <select id="c-comm"></select></label>
+        <label>시작일 <input id="c-from" type="date"></label>
+        <label>종료일 <input id="c-to" type="date"></label>
+        <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="c-min" checked> 회의 3회 미만 의원 숨기기</label>
+      </div>
+      <div class="row presets" id="c-presets" style="margin-top:10px">
+        <button data-p="90">최근 90일</button>
+        <button data-p="180">최근 6개월</button>
+        <button data-p="year">올해</button>
+        <button data-p="all">22대 전체</button>
+      </div>
+    </div>
+    <div class="card stats" id="c-stats"></div>
+    <div class="card">
+      <div class="tablewrap">
+        <table>
+          <thead><tr>
+            <th data-c="rank">순위</th><th data-c="name">의원</th><th data-c="party">정당</th>
+            <th data-c="exp" class="hide-m">회의</th><th data-c="P">출석</th><th data-c="L">청가</th><th data-c="T">출장</th>
+            <th data-c="A">사유 없는 불참</th><th data-c="rate">출석률</th>
+          </tr></thead>
+          <tbody id="c-tbody"></tbody>
+        </table>
+      </div>
+      <p class="note">
+        ※ <b>시범 서비스</b>: 현재 일부 위원회만 집계합니다. 국회 회의록의 "출석 위원 / 청가 위원 / 출장 위원" 명단을 읽어 계산합니다.<br>
+        ※ <b>출석률</b> = 출석 ÷ 해당 의원이 위원회에 있던 기간의 회의 수. 청가(허가받은 결석)와 출장도 출석률에서는 결석으로 셉니다. <b>사유 없는 불참</b>은 회의록 어느 명단에도 이름이 없는 경우입니다.<br>
+        ※ 의원이 위원회에 처음 이름을 올린 회의부터 마지막으로 이름이 있는 회의까지를 소속 기간으로 간주합니다. 위원이 바뀐 시점의 앞뒤 회의는 오차가 있을 수 있습니다.<br>
+        ※ 상임위원회 회의만 포함합니다. 법안심사소위원회, 국정감사, 공청회, 인사청문회는 포함하지 않습니다. 회의 도중 퇴장은 구분되지 않고, 회의록이 공개된 뒤에 반영됩니다.
+      </p>
+    </div>
+  </div>
+ </section>
 </main>
 
 <div id="modal"><div class="box" id="mbox"></div></div>
@@ -264,7 +316,7 @@ async function init() {
   setPreset('90');
 
   const hash = decodeURIComponent(location.hash.slice(1));
-  if (hash) { const r = ROWS.find(x => x.name === hash); if (r) showMember(r.i); else { $('q').value = hash; render(); } }
+  if (hash && hash !== '상임위') { const r = ROWS.find(x => x.name === hash); if (r) showMember(r.i); else { $('q').value = hash; render(); } }
 }
 
 document.querySelectorAll('#presets button').forEach(b => b.onclick = () => setPreset(b.dataset.p));
@@ -279,6 +331,150 @@ $('tbody').onclick = e => { const tr = e.target.closest('tr[data-i]'); if (tr) s
 $('modal').onclick = e => { if (e.target.id === 'modal') closeModal(); };
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 init();
+</script>
+
+<script>
+// ───────── 상임위 출석 탭 ─────────
+const CM = { data: null, party: {}, cur: {}, cmit: {}, rows: [], sortKey: 'rate', sortDir: -1, started: false, min: null, max: null };
+
+function showTab(which) {
+  const c = which === 'c';
+  $('tab-plenary').style.display = c ? 'none' : '';
+  $('tab-committee').style.display = c ? '' : 'none';
+  $('tabP').classList.toggle('on', !c); $('tabC').classList.toggle('on', c);
+  if (c && !CM.started) { CM.started = true; cmInit(); }
+  history.replaceState(null, '', location.pathname + location.search + (c ? '#상임위' : ''));
+}
+
+async function cmInit() {
+  try {
+    const [cd, ad] = await Promise.all([
+      fetch('data/committee.json', {cache: 'no-cache'}).then(r => { if (!r.ok) throw 0; return r.json(); }),
+      fetch('data/attendance.json', {cache: 'no-cache'}).then(r => r.ok ? r.json() : null).catch(() => null)
+    ]);
+    CM.data = cd;
+    for (const m of (ad?.members || [])) { if (m.name && (!CM.party[m.name] || m.current)) { CM.party[m.name] = m.party; CM.cur[m.name] = !!m.current; CM.cmit[m.name] = m.current ? (m.cmit || '') : ''; } }
+  } catch (e) {
+    $('c-loading').textContent = '상임위 데이터가 아직 없습니다. 데이터 갱신이 한 번 실행된 뒤에 표시됩니다.';
+    CM.started = false; return;
+  }
+  const names = Object.keys(CM.data.committees).filter(k => CM.data.committees[k].meetings.length);
+  if (!names.length) { $('c-loading').textContent = '집계된 회의가 아직 없습니다.'; CM.started = false; return; }
+  $('c-comm').innerHTML = names.map(n => `<option>${esc(n)}</option>`).join('');
+  $('c-loading').style.display = 'none'; $('c-app').style.display = 'block';
+  cmPreset('90');
+}
+
+function cmMeetings() { return CM.data.committees[$('c-comm').value].meetings; }
+
+function cmPreset(p) {
+  const ms = cmMeetings(); const maxS = ms[ms.length - 1][1], minS = ms[0][1];
+  const to = new Date(maxS + 'T00:00:00Z'), from = new Date(to);
+  if (p === 'all') from.setTime(new Date(minS + 'T00:00:00Z').getTime());
+  else if (p === 'year') from.setUTCMonth(0, 1);
+  else from.setUTCDate(from.getUTCDate() - (+p) + 1);
+  $('c-from').value = from.toISOString().slice(0, 10) < minS ? minS : from.toISOString().slice(0, 10);
+  $('c-to').value = maxS;
+  document.querySelectorAll('#c-presets button').forEach(b => b.classList.toggle('on', b.dataset.p === p));
+  cmRefresh();
+}
+
+function cmCompute() {
+  const ms = cmMeetings(), from = $('c-from').value, to = $('c-to').value;
+  // 의원별 소속 기간: 이름이 처음 나온 회의 ~ 마지막으로 나온 회의 (위원회 전체 기간 기준)
+  const win = {};
+  for (const m of ms) for (const n of [...m[3], ...m[4], ...m[5]]) {
+    const w = win[n] ||= {first: m[1], last: m[1]};
+    if (m[1] < w.first) w.first = m[1]; if (m[1] > w.last) w.last = m[1];
+  }
+  // 현재 이 위원회 소속인 의원은 마지막 회의까지 소속으로 봅니다 (마지막 회의들에 연속으로 빠진 경우를 놓치지 않기 위해)
+  const comm = $('c-comm').value, lastDate = ms[ms.length - 1][1];
+  for (const [n, w] of Object.entries(win)) if ((CM.cmit[n] || '').includes(comm)) w.last = lastDate;
+  const inPeriod = ms.filter(m => m[1] >= from && m[1] <= to);
+  const rows = Object.entries(win).map(([name, w]) => {
+    const r = {name, P: 0, L: 0, T: 0, A: 0, log: []};
+    for (const m of inPeriod) {
+      if (m[1] < w.first || m[1] > w.last) continue;
+      const s = m[3].includes(name) ? 'P' : m[4].includes(name) ? 'L' : m[5].includes(name) ? 'T' : 'A';
+      r[s]++; r.log.push([m[1], m[2], s]);
+    }
+    r.exp = r.P + r.L + r.T + r.A;
+    r.rate = r.exp ? r.P / r.exp : 0;
+    r.party = CM.party[name] || '-';
+    r.current = CM.cur[name];
+    return r;
+  }).filter(r => r.exp > 0);
+  [...rows].sort((a, b) => b.rate - a.rate || b.exp - a.exp).forEach((r, i) => r.rank = i + 1);
+  return {rows, inPeriod};
+}
+
+function cmRefresh() {
+  const {rows, inPeriod} = cmCompute();
+  CM.rows = rows;
+  const shown = rows.filter(r => !$('c-min').checked || r.exp >= 3);
+  const avg = shown.length ? shown.reduce((s, r) => s + r.rate, 0) / shown.length : 0;
+  const unexcused = shown.reduce((s, r) => s + r.A, 0);
+  $('c-stats').innerHTML = [
+    [inPeriod.length + '회', '상임위 회의'], [shown.length + '명', '집계 의원'],
+    [(avg * 100).toFixed(1) + '%', '평균 출석률'], [unexcused + '건', '사유 없는 불참 합계']
+  ].map(([b, s]) => `<div class="stat"><b>${b}</b><span>${s}</span></div>`).join('');
+  cmRender();
+}
+
+function cmRender() {
+  const list = CM.rows.filter(r => !$('c-min').checked || r.exp >= 3);
+  const k = CM.sortKey, d = CM.sortDir;
+  list.sort((a, b) => { const x = a[k], y = b[k]; return (typeof x === 'string' ? x.localeCompare(y) : x - y) * d || a.rank - b.rank; });
+  $('c-tbody').innerHTML = list.map(r => `
+    <tr data-n="${esc(r.name)}">
+      <td>${r.rank}</td>
+      <td class="l"><b>${esc(r.name)}</b>${r.current === false ? ' <span class="ex">(전)</span>' : ''}</td>
+      <td><span class="pill" style="background:${pc(r.party)}">${esc(r.party)}</span></td>
+      <td class="hide-m">${r.exp}</td><td>${r.P}</td><td>${r.L || '<span class="ex">0</span>'}</td><td>${r.T || '<span class="ex">0</span>'}</td>
+      <td class="${r.A ? 'low' : ''}">${r.A}</td>
+      <td><div class="rate"><i style="width:${r.rate * 60}px"></i><span class="${r.rate < .7 ? 'low' : ''}">${(r.rate * 100).toFixed(1)}%</span></div></td>
+    </tr>`).join('') || '<tr><td colspan="9">이 기간에는 회의가 없습니다.</td></tr>';
+  document.querySelectorAll('#tab-committee th').forEach(th => { th.classList.toggle('sorted', th.dataset.c === k); th.dataset.dir = d > 0 ? '▲' : '▼'; });
+}
+
+function cmShow(name) {
+  const r = CM.rows.find(x => x.name === name); if (!r) return;
+  const color = {P: '#2E75B6', L: '#f0b429', T: '#8e9aaf', A: '#c0392b'};
+  const label = {P: '출석', L: '청가', T: '출장', A: '사유 없는 불참'};
+  const absent = r.log.filter(x => x[2] === 'A').reverse();
+  $('mbox').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <h2 style="margin:0">${esc(r.name)} <span class="pill" style="background:${pc(r.party)}">${esc(r.party)}</span></h2>
+      <button onclick="closeModal()">닫기</button>
+    </div>
+    <p class="note">${esc($('c-comm').value)} · ${$('c-from').value} ~ ${$('c-to').value}</p>
+    <div class="stats">
+      <div class="stat"><b>${(r.rate * 100).toFixed(1)}%</b><span>출석률 (${r.rank}위)</span></div>
+      <div class="stat"><b>${r.P}/${r.exp}</b><span>출석 / 회의</span></div>
+      <div class="stat"><b>${r.L}</b><span>청가</span></div>
+      <div class="stat"><b>${r.T}</b><span>출장</span></div>
+      <div class="stat"><b>${r.A}</b><span>사유 없는 불참</span></div>
+    </div>
+    <h2 style="margin-top:16px">회의별 기록</h2>
+    <div class="cal">${r.log.map(([d2, t, s]) => `<span title="${d2} · ${esc(t)} · ${label[s]}" style="background:${color[s]}"></span>`).join('')}</div>
+    <p class="note"><span style="color:#2E75B6">■ 출석</span> <span style="color:#f0b429">■ 청가</span> <span style="color:#8e9aaf">■ 출장</span> <span style="color:#c0392b">■ 사유 없는 불참</span> (칸에 마우스를 올리면 날짜와 회의명이 보입니다)</p>
+    ${absent.length ? `<h2>사유 없는 불참 회의 (${absent.length}건)</h2><table><tbody>${absent.map(a => `<tr><td style="white-space:nowrap">${a[0]}</td><td class="l">${esc(a[1])}</td></tr>`).join('')}</tbody></table>` : ''}`;
+  $('modal').style.display = 'flex';
+}
+
+$('tabP').onclick = () => showTab('p');
+$('tabC').onclick = () => showTab('c');
+document.querySelectorAll('#c-presets button').forEach(b => b.onclick = () => cmPreset(b.dataset.p));
+['c-from', 'c-to'].forEach(id => $(id).addEventListener('change', () => { document.querySelectorAll('#c-presets button').forEach(b => b.classList.remove('on')); cmRefresh(); }));
+$('c-comm').addEventListener('change', () => cmPreset('90'));
+$('c-min').addEventListener('input', cmRefresh);
+document.querySelector('#tab-committee thead').onclick = e => {
+  const k = e.target.dataset?.c; if (!k) return;
+  if (k === CM.sortKey) CM.sortDir *= -1; else { CM.sortKey = k; CM.sortDir = ['name', 'party', 'rank'].includes(k) ? 1 : -1; }
+  cmRender();
+};
+$('c-tbody').onclick = e => { const tr = e.target.closest('tr[data-n]'); if (tr) cmShow(tr.dataset.n); };
+if (location.hash === '#' + encodeURIComponent('상임위') || decodeURIComponent(location.hash) === '#상임위') showTab('c');
 </script>
 </body>
 </html>
