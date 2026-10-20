@@ -169,7 +169,39 @@
 </main>
 
 <div id="modal"><div class="box" id="mbox"></div></div>
+<div id="visitors" style="display:none;text-align:center;padding:14px 0 0;color:var(--muted);font-size:13px">
+  👀 오늘 방문 <b id="v-today" style="color:var(--text,#1e3a5f);font-size:18px">-</b>명 · 누적 방문 <b id="v-total" style="color:var(--text,#1e3a5f);font-size:18px">-</b>명
+</div>
 <footer>데이터 출처: <a href="https://open.assembly.go.kr" target="_blank" rel="noopener">국회 열린국회정보</a> · 매일 자동 갱신</footer>
+<script>
+// 방문자 수: 외부 무료 카운터(Abacus)를 사용합니다. 같은 브라우저에서는 하루 1회만 집계합니다.
+(async () => {
+  const BASE = 'https://abacus.jasoncameron.dev/', NS = 'hateduk-assembly-attendance';
+  const kst = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10).replace(/-/g, '');
+  let counted = false;
+  try { counted = localStorage.getItem('visited-day') === kst; } catch {}
+  const call = async key => {
+    const r = await fetch(BASE + (counted ? 'get/' : 'hit/') + NS + '/' + key, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error(r.status);
+    return (await r.json()).value;
+  };
+  const get = async key => {            // 아직 없는 키는 0으로 처리
+    const r = await fetch(BASE + 'get/' + NS + '/' + key, { signal: AbortSignal.timeout(8000) });
+    return r.ok ? (await r.json()).value : 0;
+  };
+  try {
+    const [total, today] = await Promise.all([
+      call('total'),
+      counted ? get('d' + kst) : call('d' + kst),
+    ]);
+    // 하루 첫 방문만 total/today 둘 다 hit, 이미 집계한 방문자는 조회만
+    if (!counted) { try { localStorage.setItem('visited-day', kst); } catch {} }
+    document.getElementById('v-total').textContent = total.toLocaleString('ko-KR');
+    document.getElementById('v-today').textContent = (today || 0).toLocaleString('ko-KR');
+    document.getElementById('visitors').style.display = '';
+  } catch (e) { /* 카운터 서버 문제 시 조용히 숨김 */ }
+})();
+</script>
 
 <script>
 const PARTY_COLOR = {'더불어민주당':'#004EA2','국민의힘':'#E61E2B','조국혁신당':'#06275E','개혁신당':'#FF7210','진보당':'#D6001C','기본소득당':'#00D2C3','사회민주당':'#F58400','무소속':'#888888'};
