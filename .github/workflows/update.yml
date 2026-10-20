@@ -1,0 +1,34 @@
+name: 출석 데이터 갱신
+
+on:
+  schedule:
+    - cron: '0 21 * * *'   # 매일 06:00 (한국시간)
+  workflow_dispatch:        # Actions 탭에서 수동 실행
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: 국회 API에서 표결 기록 수집
+        env:
+          ASSEMBLY_KEY: ${{ secrets.ASSEMBLY_KEY }}
+        run: node scripts/fetch.mjs
+      - name: 변경 사항 커밋
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/attendance.json
+          git diff --cached --quiet || git commit -m "데이터 갱신 $(TZ=Asia/Seoul date +'%Y-%m-%d %H:%M')"
+          git push
